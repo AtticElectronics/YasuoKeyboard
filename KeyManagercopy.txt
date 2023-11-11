@@ -1,0 +1,110 @@
+// KeyManager.cpp
+
+#include "KeyManager.h"
+
+KeyManager* KeyManager::instance = nullptr;
+
+KeyManager::KeyManager() {
+  _numKeys = 0;
+  instance = this;  // Set the instance pointer to this instance
+}
+
+void KeyManager::add(int gpio, char id, unsigned long holdTime,
+                     unsigned long delayTime, int maxCount) {
+  if (_numKeys < MAX_KEYS) {
+    pinMode(gpio, INPUT_PULLUP);
+
+    _keys[_numKeys].gpio = gpio;
+    _keys[_numKeys].id = id;
+    _keys[_numKeys].holdTime = holdTime;
+    _keys[_numKeys].delayTime = delayTime;
+    _keys[_numKeys].maxCount = maxCount;
+    _keys[_numKeys].count = 0;
+    _keys[_numKeys].prevCount = 0;
+    _keys[_numKeys].lastPressedTime = 0;
+    _keys[_numKeys].lastReleasedTime = 0;
+    _keys[_numKeys].canIncrease = true;
+    _keys[_numKeys].interruptFlag = false;
+
+    // Attach the interrupt
+    attachInterrupt(digitalPinToInterrupt(gpio), handleInterruptGlobal, CHANGE);
+
+    _numKeys++;
+  }
+}
+
+void KeyManager::handleInterruptGlobal() {
+  if (instance != nullptr) {
+    instance->handleInterrupt();
+  }
+}
+
+void KeyManager::handleInterrupt() {
+  // Check each key's state here...
+  // This method should update _keys[i].interruptFlag for the keys that have
+  // changed state For example:
+  for (int i = 0; i < _numKeys; i++) {
+    if (digitalRead(_keys[i].gpio) == LOW) {
+      _keys[i].interruptFlag = true;
+    }
+  }
+}
+
+void KeyManager::updateCounts() {
+  _stateChanged = false;
+  for (int i = 0; i < _numKeys; i++) {
+    Key& key = _keys[i];
+
+    if (key.interruptFlag) {
+      unsigned long currentMillis = millis();
+      if (key.canIncrease && key.count < key.maxCount &&
+          (currentMillis - key.lastPressedTime) > key.delayTime) {
+        key.count++;
+        key.lastPressedTime = currentMillis;
+        key.changed = true;
+      }
+
+      if (!digitalRead(key.gpio)) {
+        key.canIncrease = true;
+        key.lastReleasedTime = currentMillis;
+      }
+
+      key.interruptFlag = false;
+    }
+
+    if (key.count != 0 && (millis() - key.lastPressedTime) > key.holdTime) {
+      key.count = 0;
+      key.changed = true;
+    }
+
+    if (key.count != key.prevCount) {
+      _stateChanged = true;
+    }
+
+    key.prevCount = key.count;
+  }
+}
+
+void KeyManager::printKeysCount() {
+  if (_stateChanged) {
+    for (int i = 0; i < _numKeys; i++) {
+      Serial.print("[ Key ");
+      Serial.print(_keys[i].id);
+      Serial.print(": ");
+      Serial.print(_keys[i].count);
+      Serial.print("] ");
+    }
+    Serial.println();
+  }
+}
+
+std::vector<KeyData> KeyManager::getChangedKeysData() {
+  std::vector<KeyData> changedKeysData;
+  for (int i = 0; i < _numKeys; i++) {
+    if (_keys[i].changed) {
+      changedKeysData.push_back({_keys[i].id, _keys[i].count});
+      _keys[i].changed = false;  // Reset the changed flag
+    }
+  }
+  return changedKeysData;
+}
